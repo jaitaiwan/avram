@@ -1,6 +1,6 @@
 module Avram::UniqueColumns
   macro unique_columns(*attribute_names)
-    def self.find_or_create!(*args, **named_args)
+    def self.find_or_create!(*args, **named_args) : T
       operation = new(*args, **named_args)
       existing_record = find_existing_unique_record(operation)
 
