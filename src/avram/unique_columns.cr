@@ -11,7 +11,7 @@ module Avram::UniqueColumns
       end
     end
 
-    def self.upsert!(*args, **named_args)
+    def self.upsert!(*args, **named_args) : T
       operation = new(*args, **named_args)
       existing_record = find_existing_unique_record(operation)
 
