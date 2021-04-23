@@ -23,8 +23,8 @@ describe "Avram::SaveOperation" do
   describe "wrapping multiple saves in a transaction" do
     it "rolls them all back" do
       TestDatabase.transaction do
-        UserBox.create
-        PostBox.create
+        UserFactory.create
+        PostFactory.create
         TestDatabase.rollback
       end.should be_false
 
@@ -36,15 +36,15 @@ describe "Avram::SaveOperation" do
   describe "updating" do
     it "runs in a transaction" do
       params = Avram::Params.new({"title" => "New Title"})
-      post = PostBox.new.title("Old Title").create
+      post = PostFactory.new.title("Old Title").create
       Post::BaseQuery.new.first.title.should eq "Old Title"
 
-      PostTransactionSaveOperation.update(post, params, rollback_after_save: true) do |operation, post|
+      PostTransactionSaveOperation.update(post, params, rollback_after_save: true) do |operation, _post|
         Post::BaseQuery.new.first.title.should eq "Old Title"
         operation.saved?.should be_false
       end
 
-      PostTransactionSaveOperation.update(post, params, rollback_after_save: false) do |operation, post|
+      PostTransactionSaveOperation.update(post, params, rollback_after_save: false) do |operation, _post|
         Post::BaseQuery.new.first.title.should eq "New Title"
         operation.saved?.should be_true
       end
@@ -72,7 +72,7 @@ describe "Avram::SaveOperation" do
     it "rolls back the transaction and re-raises the error" do
       params = Avram::Params.new({"title" => "New Title"})
       expect_raises Exception, "Sad face" do
-        BadSaveOperation.create(params) do |operation, post|
+        BadSaveOperation.create(params) do |_operation, _post|
           raise "This should not be executed"
         end
       end

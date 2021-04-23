@@ -4,8 +4,12 @@ struct Float64
   end
 
   module Lucky
-    alias ColumnType = Float64
+    alias ColumnType = ::PG::Numeric | Float64
     include Avram::Type
+
+    def self.criteria(query : T, column) forall T
+      Criteria(T, Float64).new(query, column)
+    end
 
     def from_db!(value : Float64)
       value
@@ -25,6 +29,10 @@ struct Float64
 
     def parse(value : PG::Numeric)
       SuccessfulCast(Float64).new(value.to_f)
+    end
+
+    def parse(values : Array(PG::Numeric))
+      SuccessfulCast(Array(Float64)).new values.map(&.to_f)
     end
 
     def parse(value : String)

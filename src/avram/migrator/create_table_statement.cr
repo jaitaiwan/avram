@@ -6,8 +6,9 @@ class Avram::Migrator::CreateTableStatement
   include Avram::Migrator::MissingOnDeleteWithBelongsToError
 
   private getter rows = [] of String
+  private getter constraints = [] of String
 
-  def initialize(@table_name : Symbol)
+  def initialize(@table_name : TableName)
   end
 
   # Accepts a block to build a table and indices using `add` and `add_index` methods.
@@ -55,6 +56,8 @@ class Avram::Migrator::CreateTableStatement
     String.build do |statement|
       statement << initial_table_statement
       statement << rows.join(",\n")
+      statement << ",\n" if !constraints.empty?
+      statement << constraints.join(", \n")
       statement << ");"
     end
   end
@@ -71,28 +74,33 @@ class Avram::Migrator::CreateTableStatement
       .build
   end
 
+  macro composite_primary_key(*columns)
+    {% if columns.size < 2 %}
+    {% raise "composite_primary_key expected at least two primary keys, instead got #{columns.size}" %}
+    {% end %}
+    constraints << "  PRIMARY KEY ({{columns.join(", ").id}})"
+  end
+
   macro add_timestamps
     add created_at : Time
     add updated_at : Time
   end
 
   macro add(type_declaration, default = nil, index = false, unique = false, using = :btree, **type_options)
-    {% if type_declaration.type.is_a?(Union) %}
-      {% type = type_declaration.type.types.first %}
+    {% type = type_declaration.type %}
+    {% nilable = false %}
+    {% array = false %}
+    {% if type.is_a?(Union) %}
+      {% type = type.types.first %}
       {% nilable = true %}
-      {% array = false %}
-    {% elsif type_declaration.type.is_a?(Generic) %}
-      {% type = type_declaration.type.type_vars.first %}
-      {% nilable = false %}
+    {% end %}
+    {% if type.is_a?(Generic) %}
+      {% type = type.type_vars.first %}
       {% array = true %}
-    {% else %}
-      {% type = type_declaration.type %}
-      {% nilable = false %}
-      {% array = false %}
     {% end %}
 
     rows << Avram::Migrator::Columns::{{ type }}Column(
-    {% if array %}Array({% end %}{{ type }}{% if array %}){% end %}
+    {% if array %}Array({{ type }}){% else %}{{ type }}{% end %}
     ).new(
       name: {{ type_declaration.var.stringify }},
       nilable: {{ nilable }},
@@ -110,7 +118,7 @@ class Avram::Migrator::CreateTableStatement
   end
 
   # Adds a references column and index given a model class and references option.
-  macro add_belongs_to(type_declaration, on_delete, references = nil, foreign_key_type = Int64)
+  macro add_belongs_to(type_declaration, on_delete, references = nil, foreign_key_type = Int64, unique = false)
     {% unless type_declaration.is_a?(TypeDeclaration) %}
       {% raise "add_belongs_to expected a type declaration like 'user : User', instead got: '#{type_declaration}'" %}
     {% end %}
@@ -133,6 +141,18 @@ class Avram::Migrator::CreateTableStatement
     .set_references(references: %table_name.to_s, on_delete: {{ on_delete }})
     .build_add_statement_for_create
 
-    add_index :{{ foreign_key_name }}
+    add_index :{{ foreign_key_name }}, unique: {{ unique }}
+  end
+
+  macro belongs_to(type_declaration, *args, **named_args)
+    {% raise <<-ERROR
+      Unexpected call to `belongs_to` in a migration.
+      Found in #{type_declaration.filename.id}:#{type_declaration.line_number}:#{type_declaration.column_number}.
+
+      Did you mean to use 'add_belongs_to'?
+
+      'add_belongs_to #{type_declaration}, ...'
+      ERROR
+    %}
   end
 end

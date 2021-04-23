@@ -5,8 +5,8 @@ module Avram::Join
     getter :from, :to, :from_column, :to_column
 
     def initialize(
-      @from : Symbol,
-      @to : Symbol,
+      @from : TableName,
+      @to : TableName,
       @primary_key : Symbol? = nil,
       @foreign_key : Symbol? = nil,
       @comparison : String? = "=",
@@ -17,7 +17,7 @@ module Avram::Join
     abstract def join_type : String
 
     def to_sql
-      if @using.any?
+      if !@using.empty?
         %(#{join_type} JOIN #{@to} USING (#{@using.join(", ")}))
       else
         "#{join_type} JOIN #{@to} ON #{from_column} #{@comparison} #{to_column}"
@@ -34,6 +34,10 @@ module Avram::Join
 
     def default_foreign_key
       Wordsmith::Inflector.singularize(@from) + "_id"
+    end
+
+    def clone
+      self
     end
   end
 

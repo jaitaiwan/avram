@@ -58,7 +58,7 @@ module Avram::Validations
   #
   # This validation is only for Boolean Attributes. The attribute will be marked
   # as invalid for any value other than `true`.
-  def validate_acceptance_of(attribute : Avram::Attribute(Bool?), message : Avram::Attribute::ErrorMessage = "must be accepted")
+  def validate_acceptance_of(attribute : Avram::Attribute(Bool), message : Avram::Attribute::ErrorMessage = "must be accepted")
     if attribute.value != true
       attribute.add_error message
     end
@@ -110,7 +110,7 @@ module Avram::Validations
   # validate_size_of api_key, is: 32
   # ```
   def validate_size_of(
-    attribute : Avram::Attribute,
+    attribute : Avram::Attribute(String),
     *,
     is exact_size,
     message : Avram::Attribute::ErrorMessage = "is invalid",
@@ -121,14 +121,14 @@ module Avram::Validations
     end
   end
 
-  # Validate the size of the attribute is within a `min` and/or `max`
+  # Validate the size of a `String` is within a `min` and/or `max`
   #
   # ```
-  # validate_size_of age, min: 18, max: 100
-  # validate_size_of account_balance, min: 500
+  # validate_size_of feedback, min: 18, max: 100
+  # validate_size_of password, min: 12
   # ```
   def validate_size_of(
-    attribute : Avram::Attribute,
+    attribute : Avram::Attribute(String),
     min = nil,
     max = nil,
     allow_nil : Bool = false
@@ -152,82 +152,37 @@ module Avram::Validations
     end
   end
 
-  # Validates that the given attribute is unique in the database
-  #
-  # > This will only work with attributes that correspond to a database column.
+  # Validate a number is `greater_than` and/or `less_than`
   #
   # ```
-  # validate_uniqueness_of email
+  # validate_numeric age, greater_than: 18
+  # validate_numeric count, greater_than: 0, less_than: 1200
   # ```
-  #
-  # If there is another email address with the same value, the attribute will be
-  # marked as invalid.
-  #
-  # Note that you should also add a unique index when creating the table so that
-  # there are no race conditions and you are guaranteed that the value is unique.
-  #
-  # This validation is still useful as it will check for uniqueness along with
-  # all other validations. If you just have the uniqueness constraint in the
-  # database you will not know if there is a collision until all other validations
-  # pass and Avram tries to save the record.
-  def validate_uniqueness_of(
-    attribute : Avram::Attribute,
-    query : Avram::Criteria,
-    message : String = "is already taken"
+  def validate_numeric(
+    attribute : Avram::Attribute(Number),
+    greater_than = nil,
+    less_than = nil,
+    allow_nil : Bool = false
   )
-    attribute.value.try do |value|
-      if query.eq(value).first?
-        attribute.add_error message
-      end
+    if greater_than && less_than && greater_than > less_than
+      raise ImpossibleValidation.new(
+        attribute: attribute.name,
+        message: "number greater than #{greater_than} but less than #{less_than}")
     end
-  end
 
-  # Validates that the given attribute is unique in the database with a custom query
-  #
-  # The principle is the same as the other `validate_uniqueness_of` method, but
-  # this one allows customizing the query.
-  #
-  # This is especially helpful when you want to scope the uniqueness to a subset
-  # of records.
-  #
-  # For example, if you want to check that a username is unique within a company:
-  #
-  # ```
-  # validate_uniqueness_of username, query: UserQuery.new.company_id(123)
-  # ```
-  #
-  # So if there is the same username in other companies, this validation will
-  # still pass.
-  #
-  # Note that you should also add a unique validation constraint in the database
-  # This can be done using Avram migrations. For example:
-  #
-  # ```
-  # add_index [:username, :company_id], unique: true
-  # ```
-  def validate_uniqueness_of(
-    attribute : Avram::Attribute,
-    message : Avram::Attribute::ErrorMessage = "is already taken"
-  )
-    attribute.value.try do |value|
-      if build_validation_query(attribute.name, attribute.value).first?
-        attribute.add_error message
-      end
+    number = attribute.value
+
+    if number.nil?
+      attribute.add_error "is nil" unless allow_nil
+      return
     end
-  end
 
-  # Must be included in the macro to get access to the generic T class
-  # in forms that save to the database.
-  #
-  # Operations will also have access to this, but will fail if you try to use
-  # if because there is no T (model class).
-  macro included
-    private def build_validation_query(column_name, value) : T::BaseQuery
-      query = T::BaseQuery.new.where(column_name, value)
-      record.try(&.id).try do |id|
-        query = query.id.not.eq(id)
-      end
-      query
+    if greater_than && number < greater_than
+      attribute.add_error "is too small"
+    end
+
+    if less_than && number > less_than
+      attribute.add_error "is too large"
     end
   end
 end

@@ -4,8 +4,12 @@ struct UUID
   end
 
   module Lucky
-    alias ColumnType = String
+    alias ColumnType = UUID
     include Avram::Type
+
+    def self.criteria(query : T, column) forall T
+      Criteria(T, UUID).new(query, column)
+    end
 
     def parse(value : UUID)
       SuccessfulCast(UUID).new(value)
@@ -23,6 +27,10 @@ struct UUID
 
     def to_db(value : UUID)
       value.to_s
+    end
+
+    def to_db(values : Array(UUID))
+      PQ::Param.encode_array(values)
     end
 
     class Criteria(T, V) < Avram::Criteria(T, V)

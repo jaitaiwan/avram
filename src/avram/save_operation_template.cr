@@ -1,10 +1,5 @@
 class Avram::SaveOperationTemplate
-  macro setup(type, columns, table_name, primary_key_type, primary_key_name, *args, **named_args)
-    class ::{{ type }}::BaseForm
-      macro inherited
-        \{% raise "BaseForm has been renamed to SaveOperation. Please inherit from {{ type }}::SaveOperation." %}
-      end
-    end
+  macro setup(type, columns, *args, **named_args)
 
     # This makes it easy for plugins and extensions to use the base SaveOperation
     def base_query_class : ::{{ type }}::BaseQuery.class
@@ -16,31 +11,21 @@ class Avram::SaveOperationTemplate
     end
 
     class ::{{ type }}::SaveOperation < Avram::SaveOperation({{ type }})
+      {% primary_key_type = type.resolve.constant("PRIMARY_KEY_TYPE") %}
       {% if primary_key_type.id == UUID.id %}
         before_save set_uuid
 
         def set_uuid
-          id.value ||= UUID.random()
+          {% primary_key_name = type.resolve.constant("PRIMARY_KEY_NAME") %}
+          {{ primary_key_name.id }}.value ||= UUID.random()
         end
       {% end %}
-
-      def database
-        {{ type }}.database
-      end
 
       macro inherited
         FOREIGN_KEY = "{{ type.stringify.underscore.id }}_id"
       end
 
-      def table_name
-        :{{ table_name }}
-      end
-
-      def primary_key_name
-        :{{ primary_key_name.id }}
-      end
-
-      add_column_attributes({{ primary_key_type }}, {{ columns }})
+      add_column_attributes({{ columns }})
       add_cast_value_methods({{ columns }})
     end
   end

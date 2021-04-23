@@ -1,0 +1,73 @@
+name: Avram CI
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: "*"
+
+jobs:
+  check_format:
+    strategy:
+      fail-fast: false
+      matrix:
+        crystal_version:
+          - 0.36.1
+          - 1.0.0
+        experimental:
+          - false
+    runs-on: ubuntu-latest
+    continue-on-error: ${{ matrix.experimental }}
+    container: crystallang/crystal:${{ matrix.crystal_version }}
+    steps:
+      - uses: actions/checkout@v1
+      - name: Install shards
+        run: shards install
+      - name: Format
+        run: crystal tool format --check
+      - name: Lint
+        run: ./bin/ameba
+  specs:
+    strategy:
+      fail-fast: false
+      matrix:
+        crystal_version:
+          - 0.36.1
+          - 1.0.0
+        experimental:
+          - false
+    runs-on: ubuntu-latest
+    continue-on-error: ${{ matrix.experimental }}
+    container: crystallang/crystal:${{ matrix.crystal_version }}
+    services:
+      postgres:
+        image: postgres:10-alpine
+        env:
+          POSTGRES_USER: lucky
+          POSTGRES_PASSWORD: developer
+        ports:
+          - 5432:5432
+        # needed because the postgres container does not provide a healthcheck
+        options: --health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5
+    steps:
+      - name: Install PostgreSQL client
+        run: |
+          apt-get update
+          apt-get -yqq install libpq-dev postgresql-client
+      - uses: actions/checkout@v2
+      - name: Cache Crystal
+        uses: actions/cache@v1
+        with:
+          path: ~/.cache/crystal
+          key: ${{ runner.os }}-crystal
+      - name: Install shards
+        run: shards install
+      - name: Run integration test
+        run: ./script/integration_test
+        env:
+          DATABASE_URL: postgres://lucky:developer@postgres:5432/avram_dev
+      - name: Run tests
+        run: crystal spec
+        env:
+          BACKUP_DATABASE_URL: postgres://lucky:developer@postgres:5432/sample_backup
+          DATABASE_URL: postgres://lucky:developer@postgres:5432/avram_dev

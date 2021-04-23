@@ -1,11 +1,12 @@
 require "db"
 require "pg"
 require "colorize"
+require "lucky_task"
 
 class Avram::Migrator::Runner
   MIGRATIONS_TABLE_NAME = "migrations"
 
-  extend LuckyCli::TextHelpers
+  extend LuckyTask::TextHelpers
 
   @@migrations = [] of Avram::Migrator::Migration::V1.class
 
@@ -13,32 +14,35 @@ class Avram::Migrator::Runner
   end
 
   def self.db_name
-    (URI.parse(database_url).path || "")[1..-1]
+    credentials.database
   end
 
   def self.db_host
-    host = URI.parse(database_url).host
-    host unless host.blank?
+    credentials.hostname
   end
 
   def self.db_port
-    URI.parse(database_url).port
+    credentials.port
   end
 
   def self.db_user
-    URI.parse(database_url).user
+    credentials.username
   end
 
   def self.db_password
-    URI.parse(database_url).password
+    credentials.password
   end
 
   def self.migrations
     @@migrations
   end
 
+  def self.credentials
+    Avram.settings.database_to_migrate.credentials
+  end
+
   def self.database_url
-    Avram.settings.database_to_migrate.url
+    credentials.url
   end
 
   def self.cmd_args
@@ -71,29 +75,9 @@ class Avram::Migrator::Runner
         puts "Already created #{self.db_name.colorize(:green)}"
       end
     elsif (message = e.message) && (message.includes?("createdb: not found") || message.includes?("No command 'createdb' found"))
-      raise <<-ERROR
-      #{message}
-
-      Try this...
-
-        ▸ If you are on macOS  you can install postgres tools from #{macos_postgres_tools_link}
-        ▸ If you are on linux you can try running #{linux_postgres_installation_instructions}
-        ▸ If you are on CI or some servers, there may already be a database created so you don't need this command"
-
-      ERROR
+      raise PGClientNotInstalledError.new(message)
     elsif (message = e.message) && message.includes?("could not connect to database template")
-      raise <<-ERROR
-      Creating the database failed. It looks like Postgres is not running.
-
-      Message from Postgres:
-
-        #{message}
-
-      Try this...
-
-        ▸ Make sure Postgres is running
-
-      ERROR
+      raise PGNotRunningError.new(message)
     else
       raise e
     end
@@ -111,7 +95,7 @@ class Avram::Migrator::Runner
   end
 
   def self.dump_db(dump_to : String = "db/structure.sql", quiet : Bool = false)
-    Db::VerifyConnection.new(quiet: true).call
+    Db::VerifyConnection.new(quiet: true).run_task
     run "pg_dump -s #{cmd_args} > #{dump_to}"
     unless quiet
       puts "Done dumping #{db_name.colorize(:green)}"
@@ -127,26 +111,18 @@ class Avram::Migrator::Runner
   private def self.create_table_for_tracking_migrations
     <<-SQL
     CREATE TABLE IF NOT EXISTS #{MIGRATIONS_TABLE_NAME} (
-      id serial PRIMARY KEY,
+      id bigserial PRIMARY KEY,
       version bigint NOT NULL
     )
     SQL
   end
 
-  private def self.macos_postgres_tools_link
-    "https://postgresapp.com/documentation/cli-tools.html".colorize(:green)
-  end
-
-  private def self.linux_postgres_installation_instructions
-    "sudo apt-get update && sudo apt-get install postgresql postgresql-contrib".colorize(:green)
-  end
-
-  def self.run(command : String)
+  def self.run(command : String, output : IO = STDOUT)
     error_messages = IO::Memory.new
     ENV["PGPASSWORD"] = self.db_password if self.db_password
     result = Process.run command,
       shell: true,
-      output: STDOUT,
+      output: output,
       error: error_messages
     ENV.delete("PGPASSWORD") if self.db_password
     unless result.success?
@@ -190,7 +166,7 @@ class Avram::Migrator::Runner
   end
 
   def ensure_migrated!
-    if pending_migrations.any?
+    if !pending_migrations.empty?
       raise "There are pending migrations. Please run lucky db.migrate"
     end
   end
@@ -214,7 +190,5 @@ class Avram::Migrator::Runner
     end
   rescue e : DB::ConnectionRefused
     raise "Unable to connect to the database. Please check your configuration.".colorize(:red).to_s
-  rescue e : Exception
-    raise "Unexpected error while running migrations: #{e.message}".colorize(:red).to_s
   end
 end

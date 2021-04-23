@@ -1,4 +1,5 @@
-class Db::Create < LuckyCli::Task
+class Db::Create < BaseTask
+  alias Migrator = Avram::Migrator
   summary "Create the database"
 
   def initialize(@quiet : Bool = false)
@@ -18,9 +19,7 @@ class Db::Create < LuckyCli::Task
     TEXT
   end
 
-  def call
-    Avram::Migrator.run do
-      Avram::Migrator::Runner.create_db(@quiet)
-    end
+  def run_task
+    Migrator::Runner.create_db(@quiet)
   end
 end

@@ -11,12 +11,19 @@ struct Time
       Time::Format::ISO_8601_DATE_TIME,
       Time::Format::RFC_2822,
       Time::Format::RFC_3339,
+      # HTML datetime-local inputs are basically RFC 3339 without the timezone:
+      # https://developer.mozilla.org/en-US/docs/Web/HTML/Element/input/datetime-local
+      Time::Format.new("%Y-%m-%dT%H:%M:%S", Time::Location::UTC),
       # Dates and times go last, otherwise it will parse strings with both
       # dates *and* times incorrectly.
       Time::Format::HTTP_DATE,
       Time::Format::ISO_8601_DATE,
       Time::Format::ISO_8601_TIME,
     ]
+
+    def self.criteria(query : T, column) forall T
+      Criteria(T, Time).new(query, column)
+    end
 
     def from_db!(value : Time)
       value

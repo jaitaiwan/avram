@@ -34,17 +34,24 @@ module Avram::DefineAttribute
 
   ensure_base_attributes_method_is_present
 
-  macro allow_virtual(*args, **named_args)
-    {% raise "'allow_virtual' has been renamed to 'attribute'" %}
-  end
-
-  macro virtual(*args, **named_args)
-    {% raise "'virtual' has been renamed to 'attribute'" %}
-  end
-
   macro attribute(type_declaration)
     {% if type_declaration.type.is_a?(Union) %}
-      {% raise "attribute must use just one type" %}
+      {% if type_declaration.value.is_a?(Nop) %}
+        {% default_value = "" %}
+      {% else %}
+        {% default_value = "= #{type_declaration.value}" %}
+      {% end %}
+      {% raise <<-ERROR
+        `attribute` in #{@type} must not be called with a type union or nilable type but was called with #{type_declaration.type}
+        If you were attempting to create a nilable attribute, all attributes are considered nilable by default.
+
+        Try this...
+
+          attribute #{type_declaration.var} : #{type_declaration.type.types.first} #{default_value.id}
+
+        Read more on attributes: https://luckyframework.org/guides/database/validating-saving
+        ERROR
+      %}
     {% end %}
 
     {% ATTRIBUTES << type_declaration %}
@@ -58,7 +65,7 @@ module Avram::DefineAttribute
                         type_declaration.value
                       end
     %}
-    @_{{ name }} : Avram::Attribute({{ type }}?)?
+    @_{{ name }} : Avram::Attribute({{ type }})?
 
     ensure_base_attributes_method_is_present
 
@@ -71,33 +78,21 @@ module Avram::DefineAttribute
     end
 
     private def _{{ name }}
-      @_{{ name }} ||= Avram::Attribute({{ type }}?).new(
-        name: :{{ name }},
-        param: {{ name }}_param,
+      @_{{ name }} ||= Avram::Attribute({{ type }}).new(
+        name: {{ name.id.symbolize }},
         value: {{ default_value }},
         param_key: self.class.param_key
       ).tap do |attribute|
-        if {{ name }}_param_given?
-          set_{{ name }}_from_param(attribute)
-        end
+        attribute.extract(params)
       end
     end
+  end
 
-    private def {{ name }}_param
-      params.nested(self.class.param_key)["{{ name }}"]?
-    end
+  macro file_attribute(key)
+    {% unless key.is_a?(SymbolLiteral) %}
+      {% raise "file_attribute must be declared with a Symbol" %}
+    {% end %}
 
-    private def {{ name }}_param_given?
-      params.nested(self.class.param_key).has_key?("{{ name }}")
-    end
-
-    def set_{{ name }}_from_param(attribute : Avram::Attribute)
-      parse_result = {{ type }}::Lucky.parse({{ name }}_param)
-      if parse_result.is_a? Avram::Type::SuccessfulCast
-        attribute.value = parse_result.value
-      else
-        attribute.add_error "is invalid"
-      end
-    end
+    attribute {{ key.id }} : Avram::Uploadable
   end
 end

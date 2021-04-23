@@ -1,7 +1,5 @@
 module Avram
-  # = Lucky Record Errors
-  #
-  # Generic Lucky Record exception class.
+  # Generic Avram exception class.
   class AvramError < Exception
   end
 
@@ -21,13 +19,13 @@ module Avram
     end
   end
 
-  # Raised when Lucky Record cannot find a record by given id
+  # Raised when Avram cannot find a record by given id
   class RecordNotFoundError < AvramError
-    def initialize(model : Symbol, id : String)
+    def initialize(model : TableName, id : String)
       super "Could not find #{model} with id of #{id}"
     end
 
-    def initialize(model : Symbol, query : Symbol)
+    def initialize(model : TableName, query : Symbol)
       super "Could not find #{query} record in #{model}"
     end
   end
@@ -39,17 +37,17 @@ module Avram
     end
   end
 
-  # Raised when using the create! or update! methods on an operation when it does not have the proper attributes
+  # Raised when using the create!, update!, or destroy! methods on an operation when it does not have the proper attributes
   class InvalidOperationError < AvramError
     getter errors : Hash(Symbol, Array(String))
 
     def initialize(operation)
-      message = String.build do |message|
-        message << "Could not save #{operation.class.name}."
-        message << "\n"
-        message << "\n"
+      message = String.build do |string|
+        string << "Could not perform #{operation.class.name}."
+        string << "\n"
+        string << "\n"
         operation.errors.each do |attribute_name, errors|
-          message << "  ▸ #{attribute_name}: #{errors.join(", ")}\n"
+          string << "  ▸ #{attribute_name}: #{errors.join(", ")}\n"
         end
       end
       @errors = operation.errors
@@ -91,6 +89,78 @@ module Avram
         end
       end
       super error
+    end
+  end
+
+  class PGClientNotInstalledError < AvramError
+    def initialize(original_message : String)
+      super <<-ERROR
+      Message from Postgres:
+
+        #{original_message}
+
+      Try this...
+
+        ▸ If you are on macOS  you can install postgres tools from #{macos_postgres_tools_link}
+        ▸ If you are on linux you can try running #{linux_postgres_installation_instructions}
+        ▸ If you are on CI or some servers, there may already be a database created so you don't need this command"
+
+
+      ERROR
+    end
+
+    private def macos_postgres_tools_link
+      "https://postgresapp.com/documentation/cli-tools.html".colorize(:green)
+    end
+
+    private def linux_postgres_installation_instructions
+      "sudo apt-get update && sudo apt-get install postgresql postgresql-contrib".colorize(:green)
+    end
+  end
+
+  class PGNotRunningError < AvramError
+    def initialize(original_message : String)
+      super <<-ERROR
+      It looks like Postgres is not running.
+
+      Message from Postgres:
+
+        #{original_message}
+
+      Try this...
+
+        ▸ Make sure Postgres is running
+        ▸ Check your database configuration settings
+
+
+      ERROR
+    end
+  end
+
+  class InvalidDatabaseNameError < AvramError
+  end
+
+  class InvalidQueryError < AvramError
+  end
+
+  # Used when `Avram::Operation` fails.
+  class FailedOperation < AvramError
+  end
+
+  class FailedMigration < AvramError
+    def initialize(@migration : String, statements : Array(String), cause : Exception)
+      super(message(statements), cause)
+    end
+
+    private def message(statements : Array(String))
+      <<-ERROR
+      Error occurred while performing a migration.
+
+      Migration: #{@migration}
+
+      Statements:
+        #{statements.join("\n")}
+      ERROR
     end
   end
 end

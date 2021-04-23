@@ -3,7 +3,7 @@ require "ecr"
 require "file_utils"
 
 class Avram::Migrator::MigrationGenerator
-  include LuckyCli::TextHelpers
+  include LuckyTask::TextHelpers
 
   getter :name
   @_version : String?
@@ -22,6 +22,7 @@ class Avram::Migrator::MigrationGenerator
   def generate(@_version = @_version)
     ensure_camelcase_name
     make_migrations_folder_if_missing
+    ensure_unique
     File.write(file_path, contents)
     io.puts "Created #{migration_class_name.colorize(:green)} in .#{relative_file_path.colorize(:green)}"
   end
@@ -66,6 +67,19 @@ class Avram::Migrator::MigrationGenerator
     end
   end
 
+  private def ensure_unique
+    d = Dir.new(Dir.current + "/db/migrations")
+    d.each_child { |x|
+      if x.starts_with?(/[0-9]{14}_#{name.underscore}.cr/)
+        raise <<-ERROR
+          Migration name must be unique
+
+          Migration name: #{name.underscore}.cr already exists as: #{x}.
+        ERROR
+      end
+    }
+  end
+
   private def migration_class_name
     "#{name}::V#{version}"
   end
@@ -91,7 +105,7 @@ class Avram::Migrator::MigrationGenerator
   end
 end
 
-class Gen::Migration < LuckyCli::Task
+class Gen::Migration < LuckyTask::Task
   summary "Generate a new migration"
 
   Habitat.create do

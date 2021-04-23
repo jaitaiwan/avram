@@ -1,4 +1,3 @@
-require "./operation"
 require "./database_validations"
 require "./callbacks"
 require "./nested_save_operation"
@@ -8,11 +7,17 @@ require "./mark_as_failed"
 require "./param_key_override"
 require "./inherit_column_attributes"
 require "./unique_columns"
+require "./validations"
+require "./operation_errors"
 
-abstract class Avram::SaveOperation(T) < Avram::Operation
+abstract class Avram::SaveOperation(T)
+  include Avram::DefineAttribute
+  include Avram::Validations
+  include Avram::OperationErrors
+  include Avram::ParamKeyOverride
   include Avram::NeedyInitializerAndSaveMethods
   include Avram::Callbacks
-  include Avram::DatabaseValidations
+  include Avram::DatabaseValidations(T)
   include Avram::NestedSaveOperation
   include Avram::MarkAsFailed
   include Avram::InheritColumnAttributes
@@ -24,37 +29,52 @@ abstract class Avram::SaveOperation(T) < Avram::Operation
     Unperformed
   end
 
-  @save_status = SaveStatus::Unperformed
-
   macro inherited
-    @valid : Bool = true
     @@permitted_param_keys = [] of String
-    @@schema_class = T
   end
-
-  property record
-  property save_status
 
   @record : T?
   @params : Avram::Paramable
+
   getter :record, :params
 
-  abstract def table_name
+  property save_status : SaveStatus = SaveStatus::Unperformed
+  property record
+  property save_status
+
   abstract def attributes
-  abstract def primary_key_name
-  abstract def database
 
   def self.param_key
     T.name.underscore
   end
 
+  def initialize(@params)
+  end
+
+  def initialize
+    @params = Avram::Params.new
+  end
+
+  delegate :database, :table_name, :primary_key_name, to: T
+
   # :nodoc:
-  def log_failed_save
-    Avram.settings.save_failed_log_level.try do |level|
-      Avram.logger.log(level, {
-        failed_to_save:    self.class.name.to_s,
-        validation_errors: error_messages_as_string,
-      })
+  def published_save_failed_event
+    Avram::Events::SaveFailedEvent.publish(
+      operation_class: self.class.name,
+      attributes: generic_attributes
+    )
+  end
+
+  def generic_attributes
+    attributes.map do |attr|
+      Avram::GenericAttribute.new(
+        name: attr.name,
+        param: attr.param.try(&.to_s),
+        value: attr.value.try(&.to_s),
+        original_value: attr.original_value.try(&.to_s),
+        param_key: attr.param_key,
+        errors: attr.errors
+      )
     end
   end
 
@@ -79,7 +99,7 @@ abstract class Avram::SaveOperation(T) < Avram::Operation
   end
 
   # :nodoc:
-  macro add_column_attributes(primary_key_type, attributes)
+  macro add_column_attributes(attributes)
     {% for attribute in attributes %}
       {% COLUMN_ATTRIBUTES << attribute %}
     {% end %}
@@ -93,7 +113,7 @@ abstract class Avram::SaveOperation(T) < Avram::Operation
     end
 
     {% for attribute in attributes %}
-      @_{{ attribute[:name] }} : Avram::Attribute({{ attribute[:type] }}?)?
+      @_{{ attribute[:name] }} : Avram::Attribute({{ attribute[:type] }})?
 
       def {{ attribute[:name] }}
         _{{ attribute[:name] }}
@@ -112,11 +132,27 @@ abstract class Avram::SaveOperation(T) < Avram::Operation
       end
 
       private def _{{ attribute[:name] }}
-        @_{{ attribute[:name] }} ||= Avram::Attribute({{ attribute[:type] }}?).new(
+        record_value = @record.try(&.{{ attribute[:name] }})
+        value = record_value.nil? ? default_value_for_{{ attribute[:name] }} : record_value
+
+        @_{{ attribute[:name] }} ||= Avram::Attribute({{ attribute[:type] }}).new(
           name: :{{ attribute[:name].id }},
           param: permitted_params["{{ attribute[:name] }}"]?,
-          value: @record.try(&.{{ attribute[:name] }}),
+          value: value,
           param_key: self.class.param_key)
+      end
+
+      private def default_value_for_{{ attribute[:name] }}
+        {% if attribute[:value] || attribute[:value] == false %}
+          parse_result = {{ attribute[:type] }}.adapter.parse({{ attribute[:value] }})
+          if parse_result.is_a? Avram::Type::SuccessfulCast
+            parse_result.value.as({{ attribute[:type] }})
+          else
+            nil
+          end
+        {% else %}
+          nil
+        {% end %}
       end
 
       def permitted_params
@@ -128,12 +164,18 @@ abstract class Avram::SaveOperation(T) < Avram::Operation
       end
 
       def set_{{ attribute[:name] }}_from_param(_value)
+        # In nilable types, `nil` is ok, and non-nilable types we will get the
+        # "is required" error.
+        if _value.blank?
+          {{ attribute[:name] }}.value = nil
+          return
+        end
         {% if attribute[:type].is_a?(Generic) %}
           # Pass `_value` in as an Array. Currently only single values are supported.
           # TODO: Update this once Lucky params support Arrays natively
-          parse_result = {{ attribute[:type].type_vars.first }}::Lucky.parse([_value])
+          parse_result = {{ attribute[:type] }}.adapter.parse([_value])
         {% else %}
-          parse_result = {{ attribute[:type] }}::Lucky.parse(_value)
+          parse_result = {{ attribute[:type] }}.adapter.parse(_value)
         {% end %}
         if parse_result.is_a? Avram::Type::SuccessfulCast
           {{ attribute[:name] }}.value = parse_result.value.as({{ attribute[:type] }})
@@ -166,16 +208,15 @@ abstract class Avram::SaveOperation(T) < Avram::Operation
     end
   end
 
-  # Runs `before_save` steps,
-  # required validation, then returns `true` if all attributes are valid.
+  # Runs required validation,
+  # then returns `true` if all attributes are valid,
+  # and there's no custom errors
   def valid? : Bool
-    before_save
-
     # These validations must be ran after all `before_save` callbacks have completed
     # in the case that someone has set a required field in a `before_save`. If we run
     # this in a `before_save` ourselves, the ordering would cause this to be ran first.
     validate_required *required_attributes
-    attributes.all? &.valid?
+    custom_errors.empty? && attributes.all?(&.valid?)
   end
 
   # Returns true if the operation has run and saved the record successfully
@@ -186,11 +227,6 @@ abstract class Avram::SaveOperation(T) < Avram::Operation
   # Return true if the operation has run and the record failed to save
   def save_failed?
     save_status == SaveStatus::SaveFailed
-  end
-
-  # :nodoc:
-  macro fillable(*args)
-    {% raise "'fillable' has been renamed to 'permit_columns'" %}
   end
 
   macro permit_columns(*attribute_names)
@@ -241,13 +277,7 @@ abstract class Avram::SaveOperation(T) < Avram::Operation
   end
 
   def changes : Hash(Symbol, String?)
-    _changes = {} of Symbol => String?
-    column_attributes.each do |attribute|
-      if attribute.changed?
-        _changes[attribute.name] = cast_value(attribute.value)
-      end
-    end
-    _changes
+    attributes_to_hash(column_attributes.select(&.changed?))
   end
 
   macro add_cast_value_methods(columns)
@@ -266,26 +296,27 @@ abstract class Avram::SaveOperation(T) < Avram::Operation
   end
 
   def save : Bool
-    if valid? && (!persisted? || changes.any?)
+    before_save
+
+    if valid?
       transaction_committed = database.transaction do
-        insert_or_update
-        saved_record = record.not_nil!
-        after_save(saved_record)
+        insert_or_update if !changes.empty? || !persisted?
+        after_save(record.not_nil!)
         true
       end
 
       if transaction_committed
-        saved_record = record.not_nil!
-        after_commit(saved_record)
         self.save_status = SaveStatus::Saved
+        after_commit(record.not_nil!)
+        Avram::Events::SaveSuccessEvent.publish(
+          operation_class: self.class.name,
+          attributes: generic_attributes
+        )
         true
       else
         mark_as_failed
         false
       end
-    elsif valid? && changes.empty?
-      self.save_status = SaveStatus::Saved
-      true
     else
       mark_as_failed
       false
@@ -306,6 +337,15 @@ abstract class Avram::SaveOperation(T) < Avram::Operation
 
   def persisted? : Bool
     !!record_id
+  end
+
+  # `#persisted?` always returns `true` in `after_*` hooks, whether
+  # a new record was created, or an existing one was updated.
+  #
+  # This method should always return `true` for a create or `false`
+  # for an update, independent of the stage we are at in the operation.
+  def new_record? : Bool
+    {{ T.constant(:PRIMARY_KEY_NAME).id }}.value.nil?
   end
 
   private def insert_or_update
@@ -329,30 +369,31 @@ abstract class Avram::SaveOperation(T) < Avram::Operation
   private def insert : T
     self.created_at.value ||= Time.utc if responds_to?(:created_at)
     self.updated_at.value ||= Time.utc if responds_to?(:updated_at)
-    @record = database.run do |db|
-      db.query insert_sql.statement, args: insert_sql.args do |rs|
-        @record = @@schema_class.from_rs(rs).first
-      end
+    @record = database.query insert_sql.statement, args: insert_sql.args do |rs|
+      @record = T.from_rs(rs).first
     end
   end
 
   private def update(id) : T
     self.updated_at.value = Time.utc if responds_to?(:updated_at)
-    @record = database.run do |db|
-      db.query update_query(id).statement_for_update(changes), args: update_query(id).args_for_update(changes) do |rs|
-        @record = @@schema_class.from_rs(rs).first
-      end
+    @record = database.query update_query(id).statement_for_update(changes), args: update_query(id).args_for_update(changes) do |rs|
+      @record = T.from_rs(rs).first
     end
   end
 
   private def update_query(id)
     Avram::QueryBuilder
       .new(table_name)
-      .select(@@schema_class.column_names)
+      .select(T.column_names)
       .where(Avram::Where::Equal.new(primary_key_name, id.to_s))
   end
 
   private def insert_sql
-    Avram::Insert.new(table_name, changes, @@schema_class.column_names)
+    insert_values = attributes_to_hash(column_attributes).compact
+    Avram::Insert.new(table_name, insert_values, T.column_names)
+  end
+
+  private def attributes_to_hash(attributes) : Hash(Symbol, String?)
+    attributes.map { |attribute| {attribute.name, cast_value(attribute.value)} }.to_h
   end
 end

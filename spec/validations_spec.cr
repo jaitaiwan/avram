@@ -13,8 +13,12 @@ class UniquenessWithCustomMessageSaveOperation < User::SaveOperation
   end
 end
 
-private def attribute(value)
+private def attribute(value : T) : Avram::Attribute(T) forall T
   Avram::Attribute.new(value: value, param: nil, param_key: "fake", name: :fake)
+end
+
+private def nil_attribute(type : T.class) : Avram::Attribute(T) forall T
+  Avram::Attribute(T).new(value: nil, param: nil, param_key: "fake", name: :fake)
 end
 
 describe Avram::Validations do
@@ -52,7 +56,7 @@ describe Avram::Validations do
     end
 
     it "marks first field as invalid if no attributes are filled" do
-      first_blank_attribute = attribute(nil)
+      first_blank_attribute = nil_attribute(String)
       second_blank_attribute = attribute("")
 
       Avram::Validations.validate_exactly_one_filled(first_blank_attribute, second_blank_attribute)
@@ -75,7 +79,7 @@ describe Avram::Validations do
   describe "validate_required" do
     it "validates multiple attributes" do
       empty_attribute = attribute("")
-      nil_attribute = attribute(nil)
+      nil_attribute = nil_attribute(String)
 
       Avram::Validations.validate_required(empty_attribute, nil_attribute)
 
@@ -102,19 +106,19 @@ describe Avram::Validations do
 
   describe "validate_uniqueness_of" do
     it "validates that a new record is unique with a query or without one" do
-      existing_user = UserBox.new.name("Sally").nickname("Sal").create
+      existing_user = UserFactory.new.name("Sally").nickname("Sal").create
       operation = UniquenessSaveOperation.new
       operation.name.value = existing_user.name
       operation.nickname.value = existing_user.nickname.not_nil!.downcase
 
-      operation.valid?
+      operation.save
 
       operation.name.errors.should contain "is already taken"
       operation.nickname.errors.should contain "is already taken"
     end
 
     it "ignores the existing record on update" do
-      existing_user = UserBox.new.name("Sally").create
+      existing_user = UserFactory.new.name("Sally").create
       operation = UniquenessSaveOperation.new(existing_user)
       operation.name.value = existing_user.name
 
@@ -134,7 +138,7 @@ describe Avram::Validations do
     end
 
     it "validates custom message for validate_uniqueness_of" do
-      existing_user = UserBox.create
+      existing_user = UserFactory.create
       UniquenessWithCustomMessageSaveOperation.create(name: existing_user.name) do |operation, _user|
         operation.name.errors.should eq(["cannot be used"])
       end
@@ -172,7 +176,7 @@ describe Avram::Validations do
       Avram::Validations.validate_acceptance_of false_attribute
       false_attribute.errors.should eq(["must be accepted"])
 
-      nil_attribute = attribute(nil)
+      nil_attribute = nil_attribute(Bool)
       Avram::Validations.validate_acceptance_of nil_attribute
       nil_attribute.errors.should eq(["must be accepted"])
 
@@ -208,7 +212,7 @@ describe Avram::Validations do
     end
 
     it "can allow nil" do
-      nil_name = Avram::Attribute(String?).new(value: nil, param: nil, param_key: "fake", name: :fake)
+      nil_name = Avram::Attribute(String).new(value: nil, param: nil, param_key: "fake", name: :fake)
 
       Avram::Validations.validate_inclusion_of(nil_name, in: ["Jamie"], allow_nil: true)
       nil_name.valid?.should be_true
@@ -241,25 +245,73 @@ describe Avram::Validations do
     end
 
     it "raises an error for an impossible condition" do
-      does_not_matter = attribute(nil)
       expect_raises(Avram::ImpossibleValidation) do
-        Avram::Validations.validate_size_of does_not_matter, min: 4, max: 1
+        Avram::Validations.validate_size_of nil_attribute(String), min: 4, max: 1
       end
     end
 
     it "can allow nil" do
-      just_nil = attribute(nil)
+      just_nil = nil_attribute(String)
       Avram::Validations.validate_size_of(just_nil, is: 10, allow_nil: true)
       just_nil.valid?.should be_true
 
+      just_nil = nil_attribute(String)
       Avram::Validations.validate_size_of(just_nil, min: 1, max: 2, allow_nil: true)
       just_nil.valid?.should be_true
 
+      just_nil = nil_attribute(String)
       Avram::Validations.validate_size_of(just_nil, is: 10)
       just_nil.valid?.should be_false
 
+      just_nil = nil_attribute(String)
       Avram::Validations.validate_size_of(just_nil, min: 1, max: 2)
       just_nil.valid?.should be_false
+    end
+  end
+
+  describe "validate_numeric" do
+    it "validates" do
+      too_small_attribute = attribute(1)
+      Avram::Validations.validate_numeric(too_small_attribute, greater_than: 2)
+      too_small_attribute.errors.should eq(["is too small"])
+
+      too_large_attribute = attribute(38)
+      Avram::Validations.validate_numeric(too_large_attribute, less_than: 32)
+      too_large_attribute.errors.should eq(["is too large"])
+
+      just_right_attribute = attribute(10)
+      Avram::Validations.validate_numeric(just_right_attribute, greater_than: 9, less_than: 11)
+      just_right_attribute.valid?.should be_true
+    end
+
+    it "raises an error for an impossible condition" do
+      expect_raises(Avram::ImpossibleValidation) do
+        Avram::Validations.validate_numeric attribute(100), greater_than: 4, less_than: 1
+      end
+    end
+
+    it "can allow nil" do
+      just_nil = nil_attribute(Int32)
+      Avram::Validations.validate_numeric(just_nil, greater_than: 1, less_than: 2, allow_nil: true)
+      just_nil.valid?.should be_true
+
+      just_nil = nil_attribute(Int32)
+      Avram::Validations.validate_numeric(just_nil, greater_than: 1, less_than: 2)
+      just_nil.valid?.should be_false
+    end
+
+    it "handles different types of numbers" do
+      attribute = attribute(10.9)
+      Avram::Validations.validate_numeric(attribute, greater_than: 9, less_than: 11)
+      attribute.valid?.should be_true
+
+      attribute = attribute(10)
+      Avram::Validations.validate_numeric(attribute, greater_than: 9.8, less_than: 10.9)
+      attribute.valid?.should be_true
+
+      attribute = attribute(10_i64)
+      Avram::Validations.validate_numeric(attribute, greater_than: 9, less_than: 11)
+      attribute.valid?.should be_true
     end
   end
 end
