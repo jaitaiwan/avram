@@ -163,7 +163,7 @@ describe "Avram::SaveOperation" do
 
   describe ".find_or_create!" do
     it "returns the existing record if one exists" do
-      existing_user = UserBox.create &.name("Rich").nickname(nil).age(20)
+      existing_user = UserFactory.create &.name("Rich").nickname(nil).age(20)
 
       user = UniqueUserSaveOperation.find_or_create!(
         name: "Rich",
@@ -180,7 +180,7 @@ describe "Avram::SaveOperation" do
     end
 
     it "creates a new record if one doesn't exist" do
-      existing_user = UserBox.create &.name("Rich").nickname(nil).age(20)
+      existing_user = UserFactory.create &.name("Rich").nickname(nil).age(20)
       joined_at = Time.utc.at_beginning_of_second
 
       user = UniqueUserSaveOperation.find_or_create!(
@@ -203,7 +203,7 @@ describe "Avram::SaveOperation" do
 
   describe ".upsert! with unique_columns" do
     it "updates the existing record if one exists" do
-      existing_user = UserBox.create &.name("Rich").nickname(nil).age(20)
+      existing_user = UserFactory.create &.name("Rich").nickname(nil).age(20)
       joined_at = Time.utc.at_beginning_of_second
 
       user = UniqueUserSaveOperation.upsert!(
@@ -223,7 +223,7 @@ describe "Avram::SaveOperation" do
     end
 
     it "creates a new record if one doesn't exist" do
-      existing_user = UserBox.create &.name("Rich").nickname(nil).age(20)
+      existing_user = UserFactory.create &.name("Rich").nickname(nil).age(20)
       joined_at = Time.utc.at_beginning_of_second
 
       user = UniqueUserSaveOperation.upsert!(
