@@ -36,11 +36,9 @@ abstract class Avram::SaveOperation(T)
   @record : T?
   @params : Avram::Paramable
 
-  getter :record, :params
-
+  getter params
   property save_status : SaveStatus = SaveStatus::Unperformed
   property record
-  property save_status
 
   abstract def attributes
 
